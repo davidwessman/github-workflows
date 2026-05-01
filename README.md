@@ -27,9 +27,12 @@ jobs:
 
 **Inputs** (all optional):
 
-| Input    | Type    | Default | Description                          |
-| -------- | ------- | ------- | ------------------------------------ |
-| `ruby`   | boolean | `true`  | Update Ruby to latest stable         |
-| `nodejs` | boolean | `true`  | Update Node.js to latest LTS         |
+| Input        | Type    | Default | Description                          |
+| ------------ | ------- | ------- | ------------------------------------ |
+| `ruby`       | boolean | `true`  | Update Ruby to latest stable         |
+| `nodejs`     | boolean | `true`  | Update Node.js to latest LTS         |
+| `dockerfile` | boolean | `true`  | Update `FROM ruby:x.y.z` / `FROM node:x.y.z` in all `Dockerfile*` files |
 
 The workflow supports both `nodejs` and `node` as tool names in `.tool-versions`.
+Dockerfile image tags with variant suffixes (e.g. `-alpine`, `-slim`) are preserved;
+only full `x.y.z` tags are updated.

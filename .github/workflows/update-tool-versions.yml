@@ -11,6 +11,10 @@ on:
         description: "Update Node.js version to latest LTS"
         type: boolean
         default: true
+      dockerfile:
+        description: "Update Ruby/Node.js versions in Dockerfile* files"
+        type: boolean
+        default: true
 
 jobs:
   update:
@@ -45,7 +49,6 @@ jobs:
         run: |
           if [ ! -f .tool-versions ]; then
             echo ".tool-versions not found, skipping"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -71,6 +74,38 @@ jobs:
             fi
           fi
 
+      - name: Update Dockerfiles
+        id: dockerfiles
+        if: inputs.dockerfile
+        run: |
+          RUBY_VERSION="${{ steps.ruby.outputs.version }}"
+          NODE_VERSION="${{ steps.nodejs.outputs.version }}"
+          CHANGED_FILES=""
+
+          while IFS= read -r -d '' file; do
+            BEFORE=$(md5sum "$file")
+
+            if [ -n "$RUBY_VERSION" ]; then
+              sed -i -E "s|(FROM ruby:)[0-9]+\.[0-9]+\.[0-9]+|\1$RUBY_VERSION|g" "$file"
+            fi
+            if [ -n "$NODE_VERSION" ]; then
+              sed -i -E "s|(FROM node:)[0-9]+\.[0-9]+\.[0-9]+|\1$NODE_VERSION|g" "$file"
+            fi
+
+            AFTER=$(md5sum "$file")
+            if [ "$BEFORE" != "$AFTER" ]; then
+              CHANGED_FILES="${CHANGED_FILES}${file}"$'\n'
+            fi
+          done < <(find . -name 'Dockerfile*' -not -path './.git/*' -print0)
+
+          EOF_MARKER=$(openssl rand -hex 8)
+          echo "changed_files<<$EOF_MARKER" >> "$GITHUB_OUTPUT"
+          printf '%s' "$CHANGED_FILES" >> "$GITHUB_OUTPUT"
+          echo "$EOF_MARKER" >> "$GITHUB_OUTPUT"
+
+      - name: Check for changes
+        id: changes
+        run: |
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -79,15 +114,30 @@ jobs:
 
       - name: Build PR body
         id: pr_body
-        if: steps.update.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true'
         run: |
-          BODY="Updates tool versions in \`.tool-versions\`:"$'\n\n'
+          BODY=""
 
-          if [ -n "${{ steps.update.outputs.ruby_old }}" ]; then
-            BODY="${BODY}- **Ruby**: \`${{ steps.update.outputs.ruby_old }}\` → \`${{ steps.update.outputs.ruby_new }}\`"$'\n'
+          TOOL_VERSIONS_RUBY_OLD="${{ steps.update.outputs.ruby_old }}"
+          TOOL_VERSIONS_NODE_OLD="${{ steps.update.outputs.node_old }}"
+          if [ -n "$TOOL_VERSIONS_RUBY_OLD" ] || [ -n "$TOOL_VERSIONS_NODE_OLD" ]; then
+            BODY="${BODY}**\`.tool-versions\`**"$'\n'
+            if [ -n "$TOOL_VERSIONS_RUBY_OLD" ]; then
+              BODY="${BODY}- Ruby: \`${{ steps.update.outputs.ruby_old }}\` → \`${{ steps.update.outputs.ruby_new }}\`"$'\n'
+            fi
+            if [ -n "$TOOL_VERSIONS_NODE_OLD" ]; then
+              BODY="${BODY}- Node.js: \`${{ steps.update.outputs.node_old }}\` → \`${{ steps.update.outputs.node_new }}\`"$'\n'
+            fi
+            BODY="${BODY}"$'\n'
           fi
-          if [ -n "${{ steps.update.outputs.node_old }}" ]; then
-            BODY="${BODY}- **Node.js**: \`${{ steps.update.outputs.node_old }}\` → \`${{ steps.update.outputs.node_new }}\`"$'\n'
+
+          CHANGED_DOCKERFILES="${{ steps.dockerfiles.outputs.changed_files }}"
+          if [ -n "$CHANGED_DOCKERFILES" ]; then
+            BODY="${BODY}**Dockerfiles**"$'\n'
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              BODY="${BODY}- \`${f#./}\`"$'\n'
+            done <<< "$CHANGED_DOCKERFILES"
           fi
 
           EOF_MARKER=$(openssl rand -hex 8)
@@ -96,7 +146,7 @@ jobs:
           echo "$EOF_MARKER" >> "$GITHUB_OUTPUT"
 
       - name: Create Pull Request
-        if: steps.update.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
           commit-message: "chore: update tool versions"
