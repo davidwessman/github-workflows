@@ -1,2 +1,35 @@
 # github-workflows
-My custom github workflows
+My custom reusable GitHub Actions workflows.
+
+## Workflows
+
+### `update-tool-versions.yml`
+
+Fetches the latest stable Ruby and Node.js LTS versions and updates `.tool-versions` (asdf/mise), then opens a pull request with the changes.
+
+**Usage** — add this to `.github/workflows/update-tool-versions.yml` in each consuming repo:
+
+```yaml
+name: Update tool versions
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Every Monday at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  update:
+    uses: davidwessman/github-workflows/.github/workflows/update-tool-versions.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
+```
+
+**Inputs** (all optional):
+
+| Input    | Type    | Default | Description                          |
+| -------- | ------- | ------- | ------------------------------------ |
+| `ruby`   | boolean | `true`  | Update Ruby to latest stable         |
+| `nodejs` | boolean | `true`  | Update Node.js to latest LTS         |
+
+The workflow supports both `nodejs` and `node` as tool names in `.tool-versions`.

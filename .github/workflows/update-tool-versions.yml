@@ -1,0 +1,107 @@
+name: Update tool versions
+
+on:
+  workflow_call:
+    inputs:
+      ruby:
+        description: "Update Ruby version to latest stable"
+        type: boolean
+        default: true
+      nodejs:
+        description: "Update Node.js version to latest LTS"
+        type: boolean
+        default: true
+
+jobs:
+  update:
+    name: Update .tool-versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get latest Ruby version
+        id: ruby
+        if: inputs.ruby
+        run: |
+          VERSION=$(curl -sf https://endoflife.date/api/ruby.json | \
+            jq -r --arg today "$(date +%Y-%m-%d)" \
+            '[.[] | select(.eol > $today)] | sort_by(.cycle | split(".") | map(tonumber)) | last | .latest')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Get latest Node.js LTS version
+        id: nodejs
+        if: inputs.nodejs
+        run: |
+          VERSION=$(curl -sf https://endoflife.date/api/nodejs.json | \
+            jq -r --arg today "$(date +%Y-%m-%d)" \
+            '[.[] | select(.lts != false and .lts <= $today and .eol > $today)] | sort_by(.cycle | tonumber) | last | .latest')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Update .tool-versions
+        id: update
+        run: |
+          if [ ! -f .tool-versions ]; then
+            echo ".tool-versions not found, skipping"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          RUBY_VERSION="${{ steps.ruby.outputs.version }}"
+          NODE_VERSION="${{ steps.nodejs.outputs.version }}"
+
+          if [ -n "$RUBY_VERSION" ] && grep -qE '^ruby ' .tool-versions; then
+            CURRENT=$(grep -E '^ruby ' .tool-versions | awk '{print $2}')
+            if [ "$CURRENT" != "$RUBY_VERSION" ]; then
+              sed -i "s/^ruby .*/ruby $RUBY_VERSION/" .tool-versions
+              echo "ruby_old=$CURRENT" >> "$GITHUB_OUTPUT"
+              echo "ruby_new=$RUBY_VERSION" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+          if [ -n "$NODE_VERSION" ] && grep -qE '^node(js)? ' .tool-versions; then
+            CURRENT=$(grep -E '^node(js)? ' .tool-versions | awk '{print $2}')
+            TOOL_NAME=$(grep -oE '^node(js)?' .tool-versions)
+            if [ "$CURRENT" != "$NODE_VERSION" ]; then
+              sed -i "s/^$TOOL_NAME .*/$TOOL_NAME $NODE_VERSION/" .tool-versions
+              echo "node_old=$CURRENT" >> "$GITHUB_OUTPUT"
+              echo "node_new=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build PR body
+        id: pr_body
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          BODY="Updates tool versions in \`.tool-versions\`:"$'\n\n'
+
+          if [ -n "${{ steps.update.outputs.ruby_old }}" ]; then
+            BODY="${BODY}- **Ruby**: \`${{ steps.update.outputs.ruby_old }}\` → \`${{ steps.update.outputs.ruby_new }}\`"$'\n'
+          fi
+          if [ -n "${{ steps.update.outputs.node_old }}" ]; then
+            BODY="${BODY}- **Node.js**: \`${{ steps.update.outputs.node_old }}\` → \`${{ steps.update.outputs.node_new }}\`"$'\n'
+          fi
+
+          EOF_MARKER=$(openssl rand -hex 8)
+          echo "body<<$EOF_MARKER" >> "$GITHUB_OUTPUT"
+          printf '%s' "$BODY" >> "$GITHUB_OUTPUT"
+          echo "$EOF_MARKER" >> "$GITHUB_OUTPUT"
+
+      - name: Create Pull Request
+        if: steps.update.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore: update tool versions"
+          title: "chore: update tool versions"
+          body: ${{ steps.pr_body.outputs.body }}
+          branch: update-tool-versions
+          delete-branch: true
+          labels: dependencies
