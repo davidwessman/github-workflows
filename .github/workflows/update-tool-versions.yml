@@ -18,7 +18,7 @@ on:
 
 jobs:
   update:
-    name: Update .tool-versions
+    name: Update version files
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -69,6 +69,35 @@ jobs:
             TOOL_NAME=$(grep -oE '^node(js)?' .tool-versions)
             if [ "$CURRENT" != "$NODE_VERSION" ]; then
               sed -i "s/^$TOOL_NAME .*/$TOOL_NAME $NODE_VERSION/" .tool-versions
+              echo "node_old=$CURRENT" >> "$GITHUB_OUTPUT"
+              echo "node_new=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Update mise.toml
+        id: mise
+        run: |
+          if [ ! -f mise.toml ]; then
+            echo "mise.toml not found, skipping"
+            exit 0
+          fi
+
+          RUBY_VERSION="${{ steps.ruby.outputs.version }}"
+          NODE_VERSION="${{ steps.nodejs.outputs.version }}"
+
+          if [ -n "$RUBY_VERSION" ] && grep -qE '^ruby\s*=' mise.toml; then
+            CURRENT=$(grep -E '^ruby\s*=' mise.toml | grep -oE '"[^"]+"' | tr -d '"')
+            if [ "$CURRENT" != "$RUBY_VERSION" ]; then
+              sed -i -E "s/^(ruby[[:space:]]*=[[:space:]]*\")[^\"]*/\1$RUBY_VERSION/" mise.toml
+              echo "ruby_old=$CURRENT" >> "$GITHUB_OUTPUT"
+              echo "ruby_new=$RUBY_VERSION" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+          if [ -n "$NODE_VERSION" ] && grep -qE '^node(js)?\s*=' mise.toml; then
+            CURRENT=$(grep -E '^node(js)?\s*=' mise.toml | grep -oE '"[^"]+"' | tr -d '"')
+            if [ "$CURRENT" != "$NODE_VERSION" ]; then
+              sed -i -E "s/^(node(js)?[[:space:]]*=[[:space:]]*\")[^\"]*/\1$NODE_VERSION/" mise.toml
               echo "node_old=$CURRENT" >> "$GITHUB_OUTPUT"
               echo "node_new=$NODE_VERSION" >> "$GITHUB_OUTPUT"
             fi
@@ -127,6 +156,19 @@ jobs:
             fi
             if [ -n "$TOOL_VERSIONS_NODE_OLD" ]; then
               BODY="${BODY}- Node.js: \`${{ steps.update.outputs.node_old }}\` → \`${{ steps.update.outputs.node_new }}\`"$'\n'
+            fi
+            BODY="${BODY}"$'\n'
+          fi
+
+          MISE_RUBY_OLD="${{ steps.mise.outputs.ruby_old }}"
+          MISE_NODE_OLD="${{ steps.mise.outputs.node_old }}"
+          if [ -n "$MISE_RUBY_OLD" ] || [ -n "$MISE_NODE_OLD" ]; then
+            BODY="${BODY}**\`mise.toml\`**"$'\n'
+            if [ -n "$MISE_RUBY_OLD" ]; then
+              BODY="${BODY}- Ruby: \`${{ steps.mise.outputs.ruby_old }}\` → \`${{ steps.mise.outputs.ruby_new }}\`"$'\n'
+            fi
+            if [ -n "$MISE_NODE_OLD" ]; then
+              BODY="${BODY}- Node.js: \`${{ steps.mise.outputs.node_old }}\` → \`${{ steps.mise.outputs.node_new }}\`"$'\n'
             fi
             BODY="${BODY}"$'\n'
           fi

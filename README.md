@@ -5,7 +5,14 @@ My custom reusable GitHub Actions workflows.
 
 ### `update-tool-versions.yml`
 
-Fetches the latest stable Ruby and Node.js LTS versions and updates `.tool-versions` (asdf/mise), then opens a pull request with the changes.
+Fetches the latest stable Ruby and Node.js LTS versions from
+[endoflife.date](https://endoflife.date) and updates all version files it finds,
+then opens a pull request with the changes.
+
+Supported files:
+- **`.tool-versions`** (asdf/mise) — `ruby x.y.z` / `nodejs x.y.z` / `node x.y.z`
+- **`mise.toml`** — `ruby = "x.y.z"` / `node = "x.y.z"` under `[tools]`
+- **`Dockerfile*`** (all, recursive) — `FROM ruby:x.y.z` / `FROM node:x.y.z`; variant suffixes like `-alpine` are preserved
 
 **Usage** — add this to `.github/workflows/update-tool-versions.yml` in each consuming repo:
 
