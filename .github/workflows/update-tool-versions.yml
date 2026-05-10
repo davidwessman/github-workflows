@@ -132,6 +132,35 @@ jobs:
           printf '%s' "$CHANGED_FILES" >> "$GITHUB_OUTPUT"
           echo "$EOF_MARKER" >> "$GITHUB_OUTPUT"
 
+      - name: Setup Ruby
+        if: inputs.ruby && steps.ruby.outputs.version != ''
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ steps.ruby.outputs.version }}
+          bundler-cache: false
+
+      - name: Update Gemfile.lock Ruby version
+        id: gemfile_lock
+        if: inputs.ruby && steps.ruby.outputs.version != ''
+        run: |
+          if [ ! -f Gemfile.lock ]; then
+            echo "Gemfile.lock not found, skipping"
+            exit 0
+          fi
+
+          RUBY_VERSION="${{ steps.ruby.outputs.version }}"
+          CURRENT=$(grep -A1 "^RUBY VERSION" Gemfile.lock | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+
+          if [ -z "$CURRENT" ] || [ "$CURRENT" = "$RUBY_VERSION" ]; then
+            echo "Gemfile.lock Ruby version is already up to date"
+            exit 0
+          fi
+
+          bundle config set frozen false
+          bundle update --ruby
+          echo "ruby_old=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "ruby_new=$RUBY_VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Check for changes
         id: changes
         run: |
@@ -170,6 +199,13 @@ jobs:
             if [ -n "$MISE_NODE_OLD" ]; then
               BODY="${BODY}- Node.js: \`${{ steps.mise.outputs.node_old }}\` → \`${{ steps.mise.outputs.node_new }}\`"$'\n'
             fi
+            BODY="${BODY}"$'\n'
+          fi
+
+          GEMFILE_LOCK_RUBY_OLD="${{ steps.gemfile_lock.outputs.ruby_old }}"
+          if [ -n "$GEMFILE_LOCK_RUBY_OLD" ]; then
+            BODY="${BODY}**\`Gemfile.lock\`**"$'\n'
+            BODY="${BODY}- Ruby: \`${{ steps.gemfile_lock.outputs.ruby_old }}\` → \`${{ steps.gemfile_lock.outputs.ruby_new }}\`"$'\n'
             BODY="${BODY}"$'\n'
           fi
 
