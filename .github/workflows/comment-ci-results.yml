@@ -1,0 +1,181 @@
+name: Comment CI results
+
+on:
+  workflow_call:
+    inputs:
+      junit_artifact:
+        description: "Artifact containing JUnit XML results"
+        required: false
+        type: string
+        default: ""
+      brakeman_artifact:
+        description: "Artifact containing Brakeman JSON results"
+        required: false
+        type: string
+        default: ""
+      i18n_tasks_artifact:
+        description: "Artifact containing i18n-tasks JSON results"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  comment:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Download JUnit results
+        if: inputs.junit_artifact != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.junit_artifact }}
+          path: ci-results/junit
+
+      - name: Download Brakeman results
+        if: inputs.brakeman_artifact != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.brakeman_artifact }}
+          path: ci-results/brakeman
+
+      - name: Download i18n-tasks results
+        if: inputs.i18n_tasks_artifact != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.i18n_tasks_artifact }}
+          path: ci-results/i18n-tasks
+
+      - name: Create or update CI results comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+
+            const marker = "<!-- ci-results-comment -->";
+            const maxFindings = 20;
+
+            function filesIn(directory) {
+              if (!fs.existsSync(directory)) return [];
+
+              return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+                const file = path.join(directory, entry.name);
+                return entry.isDirectory() ? filesIn(file) : [file];
+              });
+            }
+
+            function junitSummary() {
+              const files = filesIn("ci-results/junit").filter((file) => file.endsWith(".xml"));
+              if (!files.length) return null;
+
+              let tests = 0;
+              let failures = 0;
+              let errors = 0;
+              let skipped = 0;
+              const findings = [];
+
+              for (const file of files) {
+                const xml = fs.readFileSync(file, "utf8");
+                tests += (xml.match(/<testcase\b/g) || []).length;
+                failures += (xml.match(/<failure\b/g) || []).length;
+                errors += (xml.match(/<error\b/g) || []).length;
+                skipped += (xml.match(/<skipped\b/g) || []).length;
+
+                for (const testCase of xml.matchAll(/<testcase\b([^>]*)>([\s\S]*?)<\/testcase>/g)) {
+                  if (!/<(?:failure|error)\b/.test(testCase[2])) continue;
+
+                  const name = testCase[1].match(/\bname="([^"]+)"/)?.[1] || "Unnamed test";
+                  const className = testCase[1].match(/\bclassname="([^"]+)"/)?.[1];
+                  findings.push(className ? `${className}: ${name}` : name);
+                }
+              }
+
+              const status = failures || errors ? "failed" : "passed";
+              const details = findings.slice(0, maxFindings).map((finding) => `- ${finding}`);
+              if (findings.length > maxFindings) details.push(`- …and ${findings.length - maxFindings} more`);
+
+              return [
+                `## ${status === "passed" ? "✅" : "❌"} Tests ${status}`,
+                "",
+                `**${tests}** tests · **${failures}** failures · **${errors}** errors · **${skipped}** skipped`,
+                details.length ? `\n${details.join("\n")}` : "",
+              ].join("\n");
+            }
+
+            function jsonSummary(directory, title, formatter) {
+              const files = filesIn(directory).filter((file) => file.endsWith(".json"));
+              if (!files.length) return null;
+
+              const summaries = [];
+              for (const file of files) {
+                try {
+                  summaries.push(formatter(JSON.parse(fs.readFileSync(file, "utf8"))));
+                } catch {
+                  summaries.push(`${path.basename(file)} could not be parsed as JSON.`);
+                }
+              }
+
+              return [`## ${title}`, "", ...summaries].join("\n");
+            }
+
+            const junit = junitSummary();
+            const brakeman = jsonSummary("ci-results/brakeman", "🔒 Brakeman", (report) => {
+              const warnings = report.warnings || [];
+              const errors = report.errors || [];
+              const findings = [...errors, ...warnings].slice(0, maxFindings).map((finding) => {
+                const location = [finding.file, finding.line].filter(Boolean).join(":");
+                return `- ${finding.warning_type || "Finding"}${location ? ` (${location})` : ""}: ${finding.message || finding.warning_code || "No details"}`;
+              });
+
+              return [
+                `**${warnings.length}** warnings · **${errors.length}** errors`,
+                findings.join("\n"),
+              ].filter(Boolean).join("\n");
+            });
+            const i18nTasks = jsonSummary("ci-results/i18n-tasks", "🌐 i18n-tasks", (report) => {
+              const entries = Object.entries(report).filter(([, value]) => Array.isArray(value));
+              const total = entries.reduce((count, [, value]) => count + value.length, 0);
+              const findings = entries.flatMap(([type, value]) => value.map((item) => {
+                const detail = typeof item === "string" ? item : JSON.stringify(item);
+                return `- ${type}: ${detail}`;
+              })).slice(0, maxFindings);
+
+              return [
+                `**${total}** findings`,
+                findings.join("\n"),
+              ].filter(Boolean).join("\n");
+            });
+
+            const sections = [junit, brakeman, i18nTasks].filter(Boolean);
+            if (!sections.length) {
+              core.warning("No configured CI result artifacts were found.");
+              return;
+            }
+
+            const body = `${marker}\n# CI results\n\n${sections.join("\n\n")}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
