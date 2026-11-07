@@ -28,12 +28,15 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    env:
+      RUDOLF_APP_ID: ${{ secrets.RUDOLF_APP_ID }}
+      RUDOLF_PRIVATE_KEY: ${{ secrets.RUDOLF_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Create Rudolf token
         id: rudolf
-        if: secrets.RUDOLF_APP_ID != '' && secrets.RUDOLF_PRIVATE_KEY != ''
+        if: env.RUDOLF_APP_ID != '' && env.RUDOLF_PRIVATE_KEY != ''
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.RUDOLF_APP_ID }}
