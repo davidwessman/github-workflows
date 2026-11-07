@@ -15,6 +15,11 @@ on:
         description: "Update Ruby/Node.js versions in Dockerfile* files"
         type: boolean
         default: true
+    secrets:
+      RUDOLF_APP_ID:
+        required: false
+      RUDOLF_PRIVATE_KEY:
+        required: false
 
 jobs:
   update:
@@ -25,6 +30,14 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Create Rudolf token
+        id: rudolf
+        if: secrets.RUDOLF_APP_ID != '' && secrets.RUDOLF_PRIVATE_KEY != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RUDOLF_APP_ID }}
+          private-key: ${{ secrets.RUDOLF_PRIVATE_KEY }}
 
       - name: Get latest Ruby version
         id: ruby
@@ -233,3 +246,4 @@ jobs:
           branch: update-tool-versions
           delete-branch: true
           labels: dependencies
+          token: ${{ steps.rudolf.outputs.token || github.token }}
