@@ -43,3 +43,31 @@ jobs:
 The workflow supports both `nodejs` and `node` as tool names in `.tool-versions`.
 Dockerfile image tags with variant suffixes (e.g. `-alpine`, `-slim`) are preserved;
 only full `x.y.z` tags are updated.
+
+### `comment-ci-results.yml`
+
+Downloads CI result artifacts from a pull-request workflow and creates or updates
+one `CI results` comment. JUnit XML test results, Brakeman JSON reports, and
+i18n-tasks JSON reports are optional and can be used independently.
+
+Upload each configured report before the reporting job, then call the workflow
+from a PR workflow after the producing jobs finish:
+
+```yaml
+jobs:
+  report:
+    if: always()
+    needs: [test]
+    uses: davidwessman/github-workflows/.github/workflows/comment-ci-results.yml@main
+    permissions:
+      actions: read
+      pull-requests: write
+    with:
+      junit_artifact: junit-results
+      brakeman_artifact: brakeman-results
+      i18n_tasks_artifact: i18n-tasks-results
+```
+
+The configured artifact names may be empty when a report is not available. The
+workflow continues if an optional artifact is absent and only updates the comment
+when at least one configured report was downloaded.
